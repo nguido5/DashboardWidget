@@ -248,6 +248,7 @@
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Needs access to control Spotify";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Needs access to display upcoming tasks";
 				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Needs access to display today's tasks";
@@ -307,6 +308,7 @@
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Needs access to control Spotify";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Needs access to display upcoming tasks";
 				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Needs access to display today's tasks";
