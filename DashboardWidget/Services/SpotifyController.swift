@@ -164,6 +164,13 @@ final class SpotifyController {
             }
         }
     }
+    
+    func stop() {
+        pollTask?.cancel()
+        pollTask = nil
+        if let observer { DistributedNotificationCenter.default().removeObserver(observer) }
+        observer = nil
+    }
 
     func refresh() async {
         switch await SpotifyBridge.fetchState() {

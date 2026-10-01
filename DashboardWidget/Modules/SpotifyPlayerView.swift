@@ -34,6 +34,7 @@ struct SpotifyPlayerView: View {
         .frame(height: 120)                 // fixed module height
         .moduleCard()
         .task { spotify.start() }
+        .onDisappear { spotify.stop() }
     }
 
     // MARK: Player

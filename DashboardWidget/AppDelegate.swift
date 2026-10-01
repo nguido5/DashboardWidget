@@ -37,6 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let frameName = "DashboardWidgetFrame"
     private var observers: [NSObjectProtocol] = []
     private var pinning = false      // true while the widget is being moved onto the current desktop
+    /// Lets SwiftUI views reach the delegate (the panel asks it to resize when modules change).
+    static weak var shared: AppDelegate?
 
     /// Just above desktop icons, below normal app windows.
     private var desktopLevel: NSWindow.Level {
@@ -44,10 +46,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppDelegate.shared = self
         Task { await EventKitManager.shared.requestAccess() }
         NSApp.setActivationPolicy(.accessory)   // no Dock icon, no app menu
 
         let hosting = NSHostingView(rootView: DashboardView())
+        hosting.sizingOptions = [.intrinsicContentSize]   // we size the window ourselves
         let size = hosting.fittingSize
 
         let w = WidgetWindow(
@@ -236,6 +240,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !visible { place(w, in: .topLeft, on: NSScreen.main, animated: false) }
     }
 
+    // MARK: Sizing
+
+    /// Fits the window to the panel. A widget in the lower half of the screen keeps its bottom
+    /// edge fixed; otherwise the top edge stays put. Never leaves the visible screen area.
+    func resize(to size: CGSize) {
+        guard let w = window, size.width > 0, size.height > 0 else { return }
+        let frame = w.frame
+        if abs(frame.width - size.width) < 0.5 && abs(frame.height - size.height) < 0.5 { return }
+
+        let vf = (w.screen ?? NSScreen.main)?.visibleFrame ?? frame
+        let anchorBottom = frame.midY < vf.midY
+        var newFrame = NSRect(
+            x: frame.minX,
+            y: anchorBottom ? frame.minY : frame.maxY - size.height,
+            width: size.width,
+            height: size.height
+        )
+        if newFrame.maxY > vf.maxY { newFrame.origin.y = vf.maxY - newFrame.height }
+        if newFrame.minY < vf.minY { newFrame.origin.y = vf.minY }
+        w.setFrame(newFrame, display: true, animate: false)
+    }
+    
     private func refreshDisplays() {
         DisplayStore.shared.refresh(widgetScreen: window?.screen)
     }

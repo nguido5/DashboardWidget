@@ -49,6 +49,7 @@ struct DashboardWidgetApp: App {
             Toggle("Float Above Other Windows", isOn: $alwaysOnTop)
 
             Divider()
+            CustomizeMenuButton()
             Toggle("Include All-Day Events", isOn: $includeAllDay)
             Toggle("Liquid Glass Style", isOn: $liquidGlass)
 
@@ -64,6 +65,25 @@ struct DashboardWidgetApp: App {
             Divider()
             Button("Quit DashboardWidget") { NSApp.terminate(nil) }
                 .keyboardShortcut("q")
+        }
+
+        Window("Customize Widget", id: "customize") {
+            CustomizeView()
+        }
+        .windowResizability(.contentSize)
+        .defaultLaunchBehavior(.suppressed)     // only opens when you choose Customize…
+        .restorationBehavior(.disabled)
+    }
+}
+
+/// Needs its own view to reach the openWindow action.
+private struct CustomizeMenuButton: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Customize…") {
+            openWindow(id: "customize")
+            NSApp.activate()
         }
     }
 }

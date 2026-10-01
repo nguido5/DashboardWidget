@@ -8,6 +8,14 @@
 import SwiftUI
 import EventKit
 
+extension PrefKey {
+    static let reminderListOrder = "reminderListOrder"
+}
+
+enum RemindersDefaults {
+    static let listOrder = "Recruiting, Academic, Personal"
+}
+
 /// Plain, thread-safe snapshot of a reminder (EKReminder itself can't cross threads safely).
 nonisolated struct ReminderItem: Identifiable, Sendable {
     let id: String
@@ -40,8 +48,19 @@ nonisolated struct ReminderItem: Identifiable, Sendable {
     }
 }
 
+struct ReminderGroup: Identifiable {
+    let id: String
+    let name: String
+    let color: Color
+    let items: [ReminderItem]
+
+    var remaining: Int { items.filter { !$0.isCompleted }.count }
+}
+
 struct RemindersView: View {
     private let manager = EventKitManager.shared
+    @AppStorage(PrefKey.reminderListOrder) private var listOrder = RemindersDefaults.listOrder
+    @AppStorage(PrefKey.reminderListOrder) private var reminderListOrder = RemindersDefaults.listOrder
     @State private var items: [ReminderItem] = []
 
     private var remaining: Int { items.filter { !$0.isCompleted }.count }
@@ -53,7 +72,7 @@ struct RemindersView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .frame(height: 200)                 // fixed module height
+        .frame(height: 220)                 // fixed module height
         .moduleCard()
         .task(id: "\(manager.remindersAuthorized)-\(manager.changeToken)") {
             while !Task.isCancelled {
@@ -105,9 +124,31 @@ struct RemindersView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 8) {
-                    ForEach(items) { row($0) }
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(groups) { group in
+                        VStack(alignment: .leading, spacing: 6) {
+                            groupHeader(group)
+                            ForEach(group.items) { row($0) }
+                        }
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func groupHeader(_ group: ReminderGroup) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(group.color).frame(width: 6, height: 6)
+            Text(group.name)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer()
+            if group.remaining > 0 {
+                Text("\(group.remaining)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
             }
         }
     }
@@ -121,23 +162,15 @@ struct RemindersView: View {
             }
             .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text(item.title)
-                    .font(.system(size: 13))
-                    .lineLimit(1)
-                    .strikethrough(item.isCompleted)
-                    .foregroundStyle(item.isCompleted ? .secondary : .primary)
-                if !item.listName.isEmpty {
-                    Text(item.listName)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .onTapGesture { openInReminders(item) }
-            .help("Open in Reminders")
+            Text(item.title)
+                .font(.system(size: 13))
+                .lineLimit(1)
+                .strikethrough(item.isCompleted)
+                .foregroundStyle(item.isCompleted ? .secondary : .primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { openInReminders(item) }
+                .help("Open in Reminders")
 
             if let label = dueLabel(item) {
                 Text(label)
@@ -147,10 +180,6 @@ struct RemindersView: View {
             }
         }
         .opacity(item.isCompleted ? 0.6 : 1)
-    }
-
-    private func openInReminders(_ item: ReminderItem) {
-        AppLinks.open("x-apple-reminderkit://REMCDReminder/\(item.id)", fallbackApp: AppLinks.remindersApp)
     }
 
     private func dueLabel(_ item: ReminderItem) -> String? {
@@ -163,6 +192,47 @@ struct RemindersView: View {
             return due.formatted(.dateTime.month(.abbreviated).day())
         }
         return item.hasTime ? due.formatted(date: .omitted, time: .shortened) : nil
+    }
+
+    private func openInReminders(_ item: ReminderItem) {
+        AppLinks.open("x-apple-reminderkit://REMCDReminder/\(item.id)", fallbackApp: AppLinks.remindersApp)
+    }
+
+    // MARK: Grouping
+
+    /// The names from the Customize window, lowercased, in order.
+    private var preferredOrder: [String] {
+        listOrder.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Position of a list in the preferred order, matched loosely ("academic" matches "Academics").
+    private func rank(of listName: String, in preferred: [String]) -> Int? {
+        let name = listName.lowercased()
+        guard !name.isEmpty else { return nil }
+        return preferred.firstIndex { name == $0 || name.hasPrefix($0) || $0.hasPrefix(name) }
+    }
+
+    /// One section per list: your listed order first, any other lists after (A-Z).
+    /// `items` is already sorted (open first, completed last), and grouping keeps that order.
+    private var groups: [ReminderGroup] {
+        let preferred = preferredOrder
+        return Dictionary(grouping: items, by: \.listName)
+            .map { name, list in
+                ReminderGroup(
+                    id: name,
+                    name: name.isEmpty ? "Reminders" : name,
+                    color: list.first?.color ?? Color.secondary,
+                    items: list
+                )
+            }
+            .sorted { a, b in
+                let ra = rank(of: a.id, in: preferred) ?? Int.max
+                let rb = rank(of: b.id, in: preferred) ?? Int.max
+                if ra != rb { return ra < rb }
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            }
     }
 
     // MARK: Data
@@ -209,7 +279,7 @@ struct RemindersView: View {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         let newValue = !items[index].isCompleted
 
-        // Update the UI right away; the row slides to its new spot.
+        // Update the UI right away; the row slides to its new spot within its list.
         withAnimation(.easeInOut(duration: 0.3)) {
             items[index].isCompleted = newValue
             items = sorted(items)

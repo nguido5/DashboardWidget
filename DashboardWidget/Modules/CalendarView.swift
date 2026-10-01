@@ -1,8 +1,8 @@
 //
-//  TimeCalendarView.swift
+//  CalendarView.swift
 //  DashboardWidget
 //
-//  Created by Nicholas Guido on 9/29/26.
+//  Created by Nicholas Guido on 9/30/26.
 //
 
 import SwiftUI
@@ -18,20 +18,19 @@ struct UpcomingEvent: Identifiable {
     let color: Color
 }
 
-struct TimeCalendarView: View {
+struct CalendarView: View {
     private let manager = EventKitManager.shared
     @AppStorage(PrefKey.includeAllDay) private var includeAllDay = false
     @State private var events: [UpcomingEvent] = []
 
     var body: some View {
-        VStack(spacing: 10) {
-            clock
-            Divider().overlay(.white.opacity(0.15))
+        VStack(alignment: .leading, spacing: 8) {
+            header
             eventsList
         }
         .padding(14)
-        .frame(maxWidth: .infinity)
-        .frame(height: 210)                 // fixed module height
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(height: 132)                 // fixed module height (was 108, +header)
         .moduleCard()
         .task(id: "\(manager.eventsAuthorized)-\(manager.changeToken)-\(includeAllDay)") {
             while !Task.isCancelled {
@@ -41,50 +40,40 @@ struct TimeCalendarView: View {
         }
     }
 
-    // MARK: Clock
-
-    private var clock: some View {
-        TimelineView(.everyMinute) { context in
-            VStack(spacing: 2) {
-                Text(context.date, format: .dateTime.hour().minute())
-                    .font(.system(size: 54, weight: .thin, design: .rounded))
-                    .monospacedDigit()
-                Text(context.date, format: .dateTime.weekday(.wide).month(.wide).day())
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-        }
+    private var header: some View {
+        Text("Upcoming Events")
+            .font(.system(size: 13, weight: .semibold))
     }
 
     // MARK: Events
 
     @ViewBuilder
     private var eventsList: some View {
-        Group {
-            if !manager.eventsAuthorized {
-                VStack(spacing: 6) {
-                    Text("Calendar access needed")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Button("Open Privacy Settings") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                    .buttonStyle(.link).font(.caption)
-                }
-            } else if events.isEmpty {
-                Text("No upcoming events")
+        if !manager.eventsAuthorized {
+            VStack(spacing: 6) {
+                Text("Calendar access needed")
                     .font(.caption).foregroundStyle(.secondary)
-            } else {
-                // Re-evaluated every minute so "in 25 min" counts down and "now" appears on time.
-                TimelineView(.everyMinute) { context in
-                    VStack(spacing: 4) {
-                        ForEach(events) { row($0, now: context.date) }
+                Button("Open Privacy Settings") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
+                        NSWorkspace.shared.open(url)
                     }
+                }
+                .buttonStyle(.link).font(.caption)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if events.isEmpty {
+            Text("No upcoming events")
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            // Re-evaluated every minute so "in 25 min" counts down and the highlight appears on time.
+            TimelineView(.everyMinute) { context in
+                VStack(spacing: 4) {
+                    ForEach(events) { row($0, now: context.date) }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private func row(_ event: UpcomingEvent, now: Date) -> some View {
