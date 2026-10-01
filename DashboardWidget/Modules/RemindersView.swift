@@ -16,12 +16,14 @@ nonisolated struct ReminderItem: Identifiable, Sendable {
     let hasTime: Bool
     let isOverdue: Bool
     let color: Color
+    let listName: String
     var isCompleted: Bool
 
     init(reminder: EKReminder) {
         id = reminder.calendarItemIdentifier
         title = reminder.title ?? "Untitled"
         color = Color(nsColor: reminder.calendar?.color ?? .systemBlue)   // the list's color
+        listName = reminder.calendar?.title ?? ""
         isCompleted = reminder.isCompleted
 
         let cal = Calendar.current
@@ -51,7 +53,7 @@ struct RemindersView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .frame(height: 180)                 // fixed module height
+        .frame(height: 200)                 // fixed module height
         .moduleCard()
         .task(id: "\(manager.remindersAuthorized)-\(manager.changeToken)") {
             while !Task.isCancelled {
@@ -119,13 +121,23 @@ struct RemindersView: View {
             }
             .buttonStyle(.plain)
 
-            Text(item.title)
-                .font(.system(size: 13))
-                .lineLimit(1)
-                .strikethrough(item.isCompleted)
-                .foregroundStyle(item.isCompleted ? .secondary : .primary)
-
-            Spacer(minLength: 8)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(item.title)
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                    .strikethrough(item.isCompleted)
+                    .foregroundStyle(item.isCompleted ? .secondary : .primary)
+                if !item.listName.isEmpty {
+                    Text(item.listName)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { openInReminders(item) }
+            .help("Open in Reminders")
 
             if let label = dueLabel(item) {
                 Text(label)
@@ -135,6 +147,10 @@ struct RemindersView: View {
             }
         }
         .opacity(item.isCompleted ? 0.6 : 1)
+    }
+
+    private func openInReminders(_ item: ReminderItem) {
+        AppLinks.open("x-apple-reminderkit://REMCDReminder/\(item.id)", fallbackApp: AppLinks.remindersApp)
     }
 
     private func dueLabel(_ item: ReminderItem) -> String? {
