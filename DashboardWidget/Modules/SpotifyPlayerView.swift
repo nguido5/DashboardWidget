@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct SpotifyPlayerView: View {
+    @Environment(\.widgetScale) private var s
     private let spotify = SpotifyController.shared
     @State private var dragFraction: Double?     // set only while scrubbing the bar
     @State private var isHovering = false
@@ -29,29 +30,29 @@ struct SpotifyPlayerView: View {
                 message(spotify.errorText, button: "Retry") { Task { await spotify.refresh() } }
             }
         }
-        .padding(14)
+        .padding(14 * s)
         .frame(maxWidth: .infinity)
-        .frame(height: 120)                 // fixed module height
+        .frame(height: WidgetModule.spotify.height * s)        // fixed module height
         .moduleCard()
-        .task { spotify.start() }
+        .onAppear { spotify.start() }        // paired one-to-one with onDisappear (start/stop are counted)
         .onDisappear { spotify.stop() }
     }
 
     // MARK: Player
 
     private var player: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 12 * s) {
             artwork
                 .contentShape(Rectangle())
                 .onTapGesture { spotify.openSpotify() }
 
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 0 * s) {
+                VStack(alignment: .leading, spacing: 1 * s) {
                     Text(spotify.title.isEmpty ? "Nothing playing" : spotify.title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 13 * s, weight: .semibold))
                         .lineLimit(1)
                     Text(subtitle)
-                        .font(.system(size: 12))
+                        .font(.system(size: 12 * s))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -60,9 +61,9 @@ struct SpotifyPlayerView: View {
                 .onTapGesture { spotify.openSpotify() }
                 .help("Open Spotify")
 
-                Spacer(minLength: 4)
+                Spacer(minLength: 4 * s)
                 progressBar
-                Spacer(minLength: 4)
+                Spacer(minLength: 4 * s)
                 controls
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -85,30 +86,39 @@ struct SpotifyPlayerView: View {
                 }
             }
         }
-        .frame(width: 64, height: 64)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .frame(width: 64 * s, height: 64 * s)
+        .clipShape(RoundedRectangle(cornerRadius: 10 * s, style: .continuous))
     }
 
     // MARK: Seekable progress bar
 
     private var progressBar: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let fraction = dragFraction ?? spotify.progress(at: context.date)
-            let active = isHovering || dragFraction != nil
+        // Ticks once a second only while music is playing and the widget is visible.
+        let ticking = spotify.isPlaying && WidgetState.shared.isOnScreen && dragFraction == nil
+        return TimelineView(TickSchedule(interval: 1, paused: !ticking)) { _ in
+            let fraction = dragFraction ?? spotify.progress(at: Date())
+            // Full screen is often a touch screen (a phone via OpenDisplay) with no hover,
+            // so the handle stays visible there.
+            let active = isHovering || dragFraction != nil || WidgetState.shared.isFullScreen
             GeometryReader { geo in
-                let dot: CGFloat = 10
+                let dot: CGFloat = 10 * s
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.18))
-                    Capsule().fill(.white.opacity(0.85))
-                        .frame(width: max(geo.size.width * fraction, 0))
+                    // The fill is a plain rectangle clipped to the track's capsule, so the left
+                    // end stays rounded at any progress (a tiny capsule looked like a flat line).
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(.white.opacity(0.18))
+                        Rectangle().fill(.white.opacity(0.85))
+                            .frame(width: max(geo.size.width * fraction, 0))
+                    }
+                    .clipShape(Capsule())
                     Circle()
                         .fill(.white)
                         .frame(width: dot, height: dot)
-                        .shadow(color: .black.opacity(0.25), radius: 2)
+                        .shadow(color: .black.opacity(0.25), radius: 2 * s)
                         .offset(x: min(max(geo.size.width * fraction - dot / 2, 0), geo.size.width - dot))
                         .opacity(active ? 1 : 0)
                 }
-                .frame(height: active ? 6 : 4)                   // bar thickens on hover/drag
+                .frame(height: (active ? 6 : 4) * s)                   // bar thickens on hover/drag
                 .frame(maxHeight: .infinity)                     // centered inside the taller hit area
                 .animation(.easeOut(duration: 0.12), value: active)
                 .background(HoverTracker(isHovering: $isHovering))
@@ -124,7 +134,7 @@ struct SpotifyPlayerView: View {
                         }
                 )
             }
-            .frame(height: 16)
+            .frame(height: 16 * s)
         }
     }
 
@@ -134,11 +144,11 @@ struct SpotifyPlayerView: View {
 
     private var controls: some View {
         ZStack {
-            HStack(spacing: 24) {
+            HStack(spacing: 24 * s) {
                 Button { spotify.previous() } label: { Image(systemName: "backward.fill") }
                 Button { spotify.playPause() } label: {
                     Image(systemName: spotify.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 18))
+                        .font(.system(size: 18 * s))
                 }
                 Button { spotify.next() } label: { Image(systemName: "forward.fill") }
             }
@@ -153,20 +163,34 @@ struct SpotifyPlayerView: View {
                 .help(spotify.isShuffling ? "Shuffle on" : "Shuffle off")
             }
         }
-        .font(.system(size: 14))
+        .font(.system(size: 14 * s))
         .buttonStyle(.plain)
     }
 
     // MARK: Empty states
 
     private func message(_ text: String, button: String, action: @escaping () -> Void) -> some View {
-        VStack(spacing: 6) {
-            Image(systemName: "music.note").font(.system(size: 20, weight: .light))
-            Text(text).font(.caption)
-            Button(button, action: action).buttonStyle(.link).font(.caption)
+        VStack(spacing: 6 * s) {
+            Image(systemName: "music.note").font(.system(size: 20 * s, weight: .light))
+            Text(text).font(.system(size: 10 * s))
+            Button(button, action: action).buttonStyle(.link).font(.system(size: 10 * s))
         }
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// A fixed-interval timeline that can be paused (a paused one draws once and then stops).
+struct TickSchedule: TimelineSchedule {
+    let interval: TimeInterval
+    let paused: Bool
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> AnyIterator<Date> {
+        var next: Date? = startDate
+        return AnyIterator {
+            defer { next = paused ? nil : next?.addingTimeInterval(interval) }
+            return next
+        }
     }
 }
 

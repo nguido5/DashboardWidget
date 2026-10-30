@@ -15,6 +15,8 @@ struct CustomizeView: View {
     @AppStorage(PrefKey.weatherLon) private var weatherLon = WeatherDefaults.longitude
     @AppStorage(PrefKey.weatherCelsius) private var celsius = false
     @AppStorage(PrefKey.reminderListOrder) private var reminderListOrder = RemindersDefaults.listOrder
+    @AppStorage(PrefKey.reminderShowNamedLists) private var showNamedLists = true
+    @AppStorage(PrefKey.reminderShowParents) private var showParents = true
 
     @State private var query = ""
     @State private var status: String?
@@ -88,6 +90,8 @@ struct CustomizeView: View {
                 .textFieldStyle(.roundedBorder)
             Text("Lists you don't name appear after these, A–Z. Names match loosely, so “Academic” also matches “Academics”.")
                 .font(.caption2).foregroundStyle(.secondary)
+            Toggle("Always show a section for the lists named above", isOn: $showNamedLists)
+            Toggle("Show the parent of subtasks (dimmed, to the right)", isOn: $showParents)
         }
     }
 

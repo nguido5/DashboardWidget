@@ -8,21 +8,22 @@
 import SwiftUI
 
 struct ClockView: View {
+    @Environment(\.widgetScale) private var s
     var body: some View {
         TimelineView(.everyMinute) { context in
-            VStack(spacing: 2) {
+            VStack(spacing: 2 * s) {
                 Text(context.date, format: .dateTime.hour().minute())
-                    .font(.system(size: 54, weight: .thin, design: .rounded))
+                    .font(.system(size: 54 * s, weight: .thin, design: .rounded))
                     .monospacedDigit()
                 Text(context.date, format: .dateTime.weekday(.wide).month(.wide).day())
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 14 * s, weight: .medium))
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
         }
-        .padding(14)
+        .padding(14 * s)
         .frame(maxWidth: .infinity)
-        .frame(height: 116)                 // fixed module height
+        .frame(height: WidgetModule.clock.height * s)          // fixed module height
         .moduleCard()
     }
 }

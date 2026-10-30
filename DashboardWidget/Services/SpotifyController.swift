@@ -65,6 +65,9 @@ nonisolated enum SpotifyBridge {
     return {stateText, trackName, artistName, albumName, artworkAddr, trackLengthMs, positionMs, shuffleOn}
     """
 
+    /// Compiled once and reused. Only touched on `queue`.
+    private nonisolated(unsafe) static var compiledStateScript: NSAppleScript?
+
     static func fetchState() async -> SpotifyResult {
         // Check first: talking to Spotify while it's closed would launch it.
         guard isRunning else { return .notRunning }
@@ -72,7 +75,11 @@ nonisolated enum SpotifyBridge {
         return await withCheckedContinuation { continuation in
             queue.async {
                 var error: NSDictionary?
-                guard let result = NSAppleScript(source: stateScript)?.executeAndReturnError(&error) else {
+                if compiledStateScript == nil {
+                    let script = NSAppleScript(source: stateScript)
+                    if script?.compileAndReturnError(&error) == true { compiledStateScript = script }
+                }
+                guard let result = compiledStateScript?.executeAndReturnError(&error) else {
                     let code = (error?["NSAppleScriptErrorNumber"] as? Int) ?? 0
                     let message = (error?["NSAppleScriptErrorMessage"] as? String) ?? "unknown error"
                     print("Spotify AppleScript error \(code): \(message)")
@@ -112,6 +119,33 @@ nonisolated enum SpotifyBridge {
     }
 }
 
+// MARK: - Spotify's change announcements
+
+/// Listens for the notice Spotify posts on play, pause, skip, and song change.
+/// Uses the selector-based API because only it can ask for immediate delivery.
+final class SpotifyAnnouncements: NSObject {
+    private var handler: (() -> Void)?
+
+    func start(_ handler: @escaping () -> Void) {
+        guard self.handler == nil else { return }
+        self.handler = handler
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(received(_:)),
+            name: Notification.Name("com.spotify.client.PlaybackStateChanged"),
+            object: nil, suspensionBehavior: .deliverImmediately
+        )
+    }
+
+    func stop() {
+        DistributedNotificationCenter.default().removeObserver(self)
+        handler = nil
+    }
+
+    @objc private func received(_ notification: Notification) {
+        handler?()      // delivered on the main thread's run loop
+    }
+}
+
 // MARK: - Observable state for the view
 
 @MainActor
@@ -143,33 +177,96 @@ final class SpotifyController {
     @ObservationIgnored private var seekToken = 0
 
     @ObservationIgnored private var pollTask: Task<Void, Never>?
-    @ObservationIgnored private var observer: NSObjectProtocol?
+    @ObservationIgnored private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+    @ObservationIgnored private var isStarted = false
+    @ObservationIgnored private var activeViews = 0     // Spotify cards currently on screen
 
     private init() {}
 
+    /// Updates come from three places, cheapest first:
+    /// 1. Spotify's own play/pause/track-change announcement (instant, costs nothing while idle).
+    /// 2. One check just after the current song should end, in case an announcement is missed.
+    /// 3. A slow check (every 10 s playing, 30 s paused) for seeks made elsewhere.
+    /// Announcements are always handled; the timed checks (2 and 3) pause while the widget
+    /// can't be seen, and nothing runs while Spotify is closed.
     func start() {
-        guard pollTask == nil else { return }
+        // Counted, because switching in or out of full screen rebuilds the Spotify card and
+        // SwiftUI may start the new card before stopping the old one. Without the count, the old
+        // card's stop() switched updates off for good while the new card was still showing.
+        activeViews += 1
+        guard !isStarted else { return }
+        isStarted = true
 
-        observer = DistributedNotificationCenter.default().addObserver(
-            forName: Notification.Name("com.spotify.client.PlaybackStateChanged"),
-            object: nil, queue: .main
-        ) { _ in
-            Task { @MainActor in await SpotifyController.shared.refresh() }
+        // Spotify's announcements are handled even when the widget is covered: each one is a
+        // single quick fetch, and only happens when something actually changed. (Gating these on
+        // visibility is what made the widget miss pauses and song changes.)
+        // .deliverImmediately: this app is almost never the active app, and macOS may otherwise
+        // hold announcements until it is.
+        announcements.start {
+            SpotifyController.shared.refreshAndReschedule()
         }
 
+        // Spotify opened or quit: resume or end polling.
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            observers.append((workspace, workspace.addObserver(forName: name, object: nil, queue: .main) { note in
+                let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                guard app?.bundleIdentifier == "com.spotify.client" else { return }
+                Task { @MainActor in SpotifyController.shared.refreshAndReschedule() }
+            }))
+        }
+
+        refreshAndReschedule()      // one fetch now, even if covered, so the state is current
+    }
+
+    func stop() {
+        activeViews = max(activeViews - 1, 0)
+        guard activeViews == 0, isStarted else { return }
+        isStarted = false
+        pollTask?.cancel()
+        pollTask = nil
+        announcements.stop()
+        for (center, observer) in observers { center.removeObserver(observer) }
+        observers = []
+    }
+
+    @ObservationIgnored private let announcements = SpotifyAnnouncements()
+
+
+    /// Called when the widget becomes visible or hidden.
+    func visibilityChanged() {
+        guard isStarted else { return }
+        restartPolling()
+    }
+
+    private func restartPolling() {
+        pollTask?.cancel()
+        guard isStarted, WidgetState.shared.isOnScreen else { pollTask = nil; return }
         pollTask = Task {
             while !Task.isCancelled {
                 await refresh()
-                try? await Task.sleep(for: .seconds(2))
+                guard let interval = pollInterval else { return }   // wait for Spotify to launch
+                try? await Task.sleep(for: .seconds(interval))
             }
         }
     }
-    
-    func stop() {
-        pollTask?.cancel()
-        pollTask = nil
-        if let observer { DistributedNotificationCenter.default().removeObserver(observer) }
-        observer = nil
+
+    /// Seconds until the next check, or nil to stop polling. While playing, that's whichever
+    /// comes first: the slow 10 s check, or just after the current song should end.
+    private var pollInterval: Double? {
+        switch status {
+        case .notRunning:
+            return nil
+        case .denied, .failed:
+            return 30
+        case .ready:
+            guard isPlaying else { return 30 }
+            guard durationMs > 0 else { return 10 }
+            let remaining = Double(durationMs) * (1 - progress(at: Date())) / 1000
+            // Backup for a missed announcement: one check just after the song should end.
+            // The 1 s floor stops a tight loop if Spotify is slow to move on.
+            return min(10, max(remaining + 0.5, 1))
+        }
     }
 
     func refresh() async {
@@ -201,6 +298,16 @@ final class SpotifyController {
         }
     }
 
+    /// After a user action: refetch now, and if polling is active, re-aim the end-of-song
+    /// timer (a seek or skip changes when the current song ends).
+    private func refreshAndReschedule() {
+        if isStarted && WidgetState.shared.isOnScreen {
+            restartPolling()        // refreshes immediately
+        } else {
+            Task { await refresh() } // keeps the menu bar's Now Playing current
+        }
+    }
+
     func progress(at date: Date) -> Double {
         guard durationMs > 0 else { return 0 }
         var position = Double(positionMs)
@@ -226,7 +333,7 @@ final class SpotifyController {
             try? await Task.sleep(for: .seconds(1))
             guard token == playToken else { return }
             playLockUntil = .distantPast
-            await refresh()
+            refreshAndReschedule()
         }
     }
 
@@ -251,7 +358,7 @@ final class SpotifyController {
             try? await Task.sleep(for: .seconds(1))
             guard token == seekToken else { return }
             seekLockUntil = .distantPast
-            await refresh()
+            refreshAndReschedule()
         }
     }
 
@@ -269,14 +376,14 @@ final class SpotifyController {
             try? await Task.sleep(for: .seconds(1))
             guard token == shuffleToken else { return }
             shuffleLockUntil = .distantPast
-            await refresh()
+            refreshAndReschedule()
         }
     }
 
     private func send(_ command: String) {
         Task {
             await SpotifyBridge.send(command)
-            await refresh()
+            refreshAndReschedule()
         }
     }
 

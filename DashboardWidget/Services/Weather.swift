@@ -228,6 +228,19 @@ final class WeatherController {
 
     private init() {}
 
+    /// Fetches only if there's no data for `key`, the last try failed, or the data is older than `maxAge`.
+    func refresh(ifOlderThan maxAge: TimeInterval, key: String) async {
+        if let snapshot, snapshot.key == key, !lastAttemptFailed,
+           Date().timeIntervalSince(snapshot.fetchedAt) < maxAge { return }
+        await refresh()
+    }
+
+    /// Seconds until the current data is older than `maxAge` (at least a minute).
+    func secondsUntilStale(_ maxAge: TimeInterval) -> Double {
+        guard let snapshot else { return 60 }
+        return max(maxAge - Date().timeIntervalSince(snapshot.fetchedAt), 60)
+    }
+
     func refresh() async {
         let defaults = UserDefaults.standard
         let latitude = defaults.object(forKey: PrefKey.weatherLat) as? Double ?? WeatherDefaults.latitude

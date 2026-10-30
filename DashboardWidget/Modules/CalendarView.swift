@@ -19,30 +19,33 @@ struct UpcomingEvent: Identifiable {
 }
 
 struct CalendarView: View {
+    @Environment(\.widgetScale) private var s
     private let manager = EventKitManager.shared
     @AppStorage(PrefKey.includeAllDay) private var includeAllDay = false
     @State private var events: [UpcomingEvent] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8 * s) {
             header
             eventsList
         }
-        .padding(14)
+        .padding(14 * s)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .frame(height: 132)                 // fixed module height (was 108, +header)
+        .frame(height: WidgetModule.calendar.height * s)       // fixed module height
         .moduleCard()
         .task(id: "\(manager.eventsAuthorized)-\(manager.changeToken)-\(includeAllDay)") {
+            // Reloads on any Calendar change; otherwise only wakes when a shown event ends
+            // (so it drops off). The minute-by-minute labels are handled by TimelineView below.
             while !Task.isCancelled {
                 load()
-                try? await Task.sleep(for: .seconds(60))   // also drops events once they end
+                try? await Task.sleep(for: .seconds(secondsUntilNextEnd()))
             }
         }
     }
 
     private var header: some View {
         Text("Upcoming Events")
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 13 * s, weight: .semibold))
     }
 
     // MARK: Events
@@ -50,25 +53,25 @@ struct CalendarView: View {
     @ViewBuilder
     private var eventsList: some View {
         if !manager.eventsAuthorized {
-            VStack(spacing: 6) {
+            VStack(spacing: 6 * s) {
                 Text("Calendar access needed")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.system(size: 10 * s)).foregroundStyle(.secondary)
                 Button("Open Privacy Settings") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
                         NSWorkspace.shared.open(url)
                     }
                 }
-                .buttonStyle(.link).font(.caption)
+                .buttonStyle(.link).font(.system(size: 10 * s))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if events.isEmpty {
             Text("No upcoming events")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.system(size: 10 * s)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             // Re-evaluated every minute so "in 25 min" counts down and the highlight appears on time.
             TimelineView(.everyMinute) { context in
-                VStack(spacing: 4) {
+                VStack(spacing: 4 * s) {
                     ForEach(events) { row($0, now: context.date) }
                 }
             }
@@ -79,21 +82,21 @@ struct CalendarView: View {
     private func row(_ event: UpcomingEvent, now: Date) -> some View {
         let live = !event.isAllDay && event.start <= now && event.end > now
         return Button { open(event) } label: {
-            HStack(spacing: 8) {
-                Circle().fill(event.color).frame(width: 8, height: 8)
+            HStack(spacing: 8 * s) {
+                Circle().fill(event.color).frame(width: 8 * s, height: 8 * s)
                 Text(event.title)
-                    .font(.system(size: 13, weight: live ? .semibold : .medium))
+                    .font(.system(size: 13 * s, weight: live ? .semibold : .medium))
                     .lineLimit(1)
-                Spacer(minLength: 8)
+                Spacer(minLength: 8 * s)
                 Text(timeLabel(event, now: now, live: live))
-                    .font(.system(size: 12, weight: live ? .semibold : .regular))
+                    .font(.system(size: 12 * s, weight: live ? .semibold : .regular))
                     .foregroundStyle(live ? Color.primary : Color.secondary)
                     .monospacedDigit()
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 6 * s)
+            .padding(.vertical, 3 * s)
             .background(live ? Color.white.opacity(0.12) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        in: RoundedRectangle(cornerRadius: 7 * s, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -126,6 +129,13 @@ struct CalendarView: View {
             return
         }
         AppLinks.open("ical://ekevent/\(id)?method=show&options=more", fallbackApp: AppLinks.calendarApp)
+    }
+
+    /// Seconds until the earliest shown event ends. Capped at an hour.
+    private func secondsUntilNextEnd() -> Double {
+        let now = Date()
+        guard let next = events.map(\.end).filter({ $0 > now }).min() else { return 3600 }
+        return min(max(next.timeIntervalSince(now) + 1, 1), 3600)
     }
 
     private func load() {
